@@ -1,0 +1,59 @@
+---
+# setup-ansible-user.yml
+- name: Create ansible user and configure sudo access
+  hosts: raspberry_pis
+  remote_user: root
+  become: false
+  
+  vars:
+    ansible_user: ansible
+    ansible_user_password: "{{ vault_ansible_user_password }}"  # We'll set this up
+  
+  tasks:
+    - name: Create ansible user
+      user:
+        name: "{{ ansible_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: yes
+        create_home: yes
+        password: "{{ ansible_user_password | password_hash('sha512') }}"
+        state: present
+    
+    - name: Allow ansible user to sudo without password
+      lineinfile:
+        path: /etc/sudoers.d/ansible
+        line: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL"
+        create: yes
+        mode: '0440'
+        validate: 'visudo -cf %s'
+    
+    - name: Ensure .ssh directory exists
+      file:
+        path: "/home/{{ ansible_user }}/.ssh"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+    
+    - name: Copy authorized_keys for ansible user
+      copy:
+        src: ~/.ssh/id_rsa.pub  # Your Semaphore/Ansible control machine's public key
+        dest: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+    
+    - name: Disable root SSH login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+      notify: restart ssh
+  
+  handlers:
+    - name: restart ssh
+      service:
+        name: ssh
+        state: restarted
